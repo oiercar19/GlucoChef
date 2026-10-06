@@ -1,6 +1,37 @@
+# Gradle y Kotlin
 .gradle/
-.idea/
+.kotlin/
 build/
-**/build/
-local.properties
+
+# Android Studio / IntelliJ
+.idea/
 *.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Configuracion local del SDK
+local.properties
+
+# Artefactos de compilacion
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Claves y configuracion de firma
+*.jks
+*.keystore
+keystore.properties
+
+# Variables de entorno locales
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
