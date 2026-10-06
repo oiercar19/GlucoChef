@@ -1,5 +1,7 @@
 # GlucoChef
 
+Puedes descargar el APK desde [GlucoChef beta en GitHub Releases](https://github.com/oiercar19/GlucoChef/releases/tag/GlucoChef-beta).
+
 Aplicación Android nativa para contar hidratos de carbono (HC). Una ración de HC equivale a 10 g HC. Los cálculos usan `BigDecimal` y solo redondean al mostrar. No calcula dosis de insulina.
 
 ## Generar el APK en otro PC
