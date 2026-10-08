@@ -2,6 +2,7 @@ package es.racionest1d.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "ingredients")
@@ -34,6 +35,7 @@ data class Recipe(
     val category: String = "Otros",
     val portions: String,
     val finishedWeight: String? = null,
+    val manualCarbRations: String? = null,
     val notes: String = "",
     val photoUri: String? = null,
     val favorite: Boolean = false,
@@ -66,6 +68,8 @@ data class Meal(
     val title: String,
     val occurredAt: Long = System.currentTimeMillis(),
     val notes: String = "",
+    val insulin: String = "",
+    val manualCarbRations: String? = null,
     val isTemplate: Boolean = false,
     val carbsSnapshot: String?
 )
@@ -125,16 +129,33 @@ data class MealWithItems(
     @Transaction @Query("SELECT * FROM meals ORDER BY occurredAt DESC") fun observeAll(): Flow<List<MealWithItems>>
     @Transaction @Query("SELECT * FROM meals WHERE id = :id") suspend fun get(id: Long): MealWithItems?
     @Insert suspend fun insert(value: Meal): Long
+    @Update suspend fun update(value: Meal)
     @Insert suspend fun insertItems(values: List<MealItem>)
+    @Query("DELETE FROM meal_items WHERE mealId = :id") suspend fun clearItems(id: Long)
     @Query("DELETE FROM meals WHERE id = :id") suspend fun delete(id: Long)
 }
 
-@Database(entities = [Ingredient::class, Recipe::class, RecipeIngredient::class, Meal::class, MealItem::class], version = 1, exportSchema = false)
+@Database(entities = [Ingredient::class, Recipe::class, RecipeIngredient::class, Meal::class, MealItem::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun ingredients(): IngredientDao
     abstract fun recipes(): RecipeDao
     abstract fun meals(): MealDao
     companion object {
-        fun open(context: Context) = Room.databaseBuilder(context, AppDatabase::class.java, "raciones-t1d.db").build()
+        fun open(context: Context) = Room.databaseBuilder(context, AppDatabase::class.java, "raciones-t1d.db")
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE meals ADD COLUMN insulin TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE recipes SET portions = '1'")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recipes ADD COLUMN manualCarbRations TEXT")
+                db.execSQL("ALTER TABLE meals ADD COLUMN manualCarbRations TEXT")
+            }
+        }
     }
 }

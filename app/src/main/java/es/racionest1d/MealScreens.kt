@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
@@ -24,26 +26,28 @@ import java.math.MathContext
 import java.text.DateFormat
 import java.util.Date
 
-@Composable internal fun MealEditor(vm: AppViewModel, nav: NavHostController, repeatId: Long, updated: Boolean) {
+@Composable internal fun MealEditor(vm: AppViewModel, nav: NavHostController, repeatId: Long, updated: Boolean, editing: Boolean = false) {
     val ingredients by vm.ingredients.collectAsState(initial = emptyList())
     val recipes by vm.recipes.collectAsState(initial = emptyList())
     val recipeSummaries by vm.recipeSummaries.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
-    val lines = remember(repeatId, updated) { mutableStateListOf<DraftMealItem>() }
-    var title by remember(repeatId, updated) { mutableStateOf("") }
-    var notes by remember(repeatId, updated) { mutableStateOf("") }
+    val lines = remember(repeatId, updated, editing) { mutableStateListOf<DraftMealItem>() }
+    var title by remember(repeatId, updated, editing) { mutableStateOf("") }
+    var notes by remember(repeatId, updated, editing) { mutableStateOf("") }
+    var insulin by remember(repeatId, updated, editing) { mutableStateOf("") }
+    var manualCarbRations by remember(repeatId, updated, editing) { mutableStateOf("") }
     var picker by remember { mutableStateOf("") }
     var createMode by remember { mutableStateOf("") }
     var editRecipeId by remember { mutableLongStateOf(0L) }
     var ingredientEditorId by remember { mutableLongStateOf(0L) }
     var chosenIngredient by remember { mutableStateOf<Ingredient?>(null) }
-    var chosenRecipe by remember { mutableStateOf<Recipe?>(null) }
     var amount by remember { mutableStateOf("1") }
-    var mode by remember { mutableStateOf("PORTIONS") }
-    var moreOptions by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(repeatId, updated) { if (repeatId > 0) {
-        vm.getMeal(repeatId)?.let { title = it.meal.title; notes = it.meal.notes }
+    LaunchedEffect(repeatId, updated, editing) { if (repeatId > 0) {
+        vm.getMeal(repeatId)?.let {
+            title = it.meal.title; notes = it.meal.notes; insulin = it.meal.insulin
+            manualCarbRations = it.meal.manualCarbRations.orEmpty()
+        }
         lines.clear(); lines.addAll(vm.repeatMeal(repeatId, updated))
     } }
     BackHandler(enabled = createMode.isNotEmpty()) {
@@ -71,49 +75,77 @@ import java.util.Date
     if (createMode == "RECIPE") {
         RecipeEditor(vm, nav, editRecipeId,
             onSaved = { newId ->
-                chosenRecipe = vm.getRecipe(newId)?.recipe
-                amount = "1"
-                mode = "PORTIONS"
+                val line = vm.mealLine("RECIPE", newId, "PORTIONS", "1")
+                lines.add(line)
                 createMode = ""
                 editRecipeId = 0L
             },
             onCancel = { picker = "RECIPE"; createMode = ""; editRecipeId = 0L })
         return
     }
-    val total = CarbCalculator.sum(lines.map { it.carbs?.let(::Nutrition) })
+    val calculatedTotal = CarbCalculator.sum(lines.map { it.carbs?.let(::Nutrition) })
+    val manualRations = decimal(manualCarbRations)?.takeIf { it >= BigDecimal.ZERO }
+    val total = manualRations?.let { Nutrition(it.multiply(BigDecimal.TEN)) } ?: calculatedTotal
+    val saveMeal: () -> Unit = {
+        scope.launch { runCatching {
+            require(lines.isNotEmpty()) { "Añade un plato o ingrediente" }
+            require(lines.all { (decimal(it.amount) ?: BigDecimal(-1)) > BigDecimal.ZERO }) { "Revisa las cantidades" }
+            val manualValue = manualCarbRations.takeIf { it.isNotBlank() }
+            if (editing) vm.updateMeal(repeatId, title, notes, insulin, lines.toList(), manualValue)
+            else vm.saveMeal(title, notes, false, lines.toList(), insulin, manualValue)
+        }.onSuccess {
+            if (editing || repeatId > 0) nav.popBackStack()
+            else nav.navigate("history") { popUpTo("meal/-1/false") { inclusive = true }; launchSingleTop = true }
+        }.onFailure { error = it.message } }
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(if (repeatId > 0) "Repetir comida" else "Nueva comida", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            if (repeatId > 0) Text(if (updated) "Valores actuales: revisa las diferencias señaladas." else "Valores originales guardados en el historial.",
+            Text(when { editing -> "Editar comida"; repeatId > 0 -> "Repetir comida"; else -> "Nueva comida" },
+                style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            if (repeatId > 0 && !editing) Text(if (updated) "Usando los valores actuales de los alimentos." else "Se mantienen los valores guardados.",
                 color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge)
             Text("Añade lo que vas a comer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             lines.forEachIndexed { index, line ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (line.kind == "RECIPE") recipes.firstOrNull { it.id == line.sourceId }?.photoUri?.let { uri ->
+                        val recipe = if (line.kind == "RECIPE") recipes.firstOrNull { it.id == line.sourceId } else null
+                        recipe?.photoUri?.let { uri ->
                             AsyncImage(model = uri, contentDescription = "Foto de ${line.name}",
                                 modifier = Modifier.fillMaxWidth().height(120.dp), contentScale = ContentScale.Crop)
                         }
                         Text(line.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        NumberInput(line.amount, { newAmount ->
-                                lines[index] = line.copy(amount = newAmount)
-                                scope.launch {
-                                    val quantity = decimal(newAmount)
-                                    if (quantity != null && quantity >= BigDecimal.ZERO) {
-                                        val n = if (line.usingSavedSnapshot) {
-                                            val old = decimal(line.amount)
-                                            if (old != null && old > BigDecimal.ZERO && line.carbs != null)
-                                                line.carbs.multiply(quantity).divide(old, MathContext.DECIMAL128) else null
-                                        } else line.sourceId?.let { id -> runCatching { vm.mealLine(line.kind, id, line.mode, newAmount, updated).carbs }.getOrNull() }
-                                        if (index < lines.size && lines[index].name == line.name && lines[index].amount == newAmount)
-                                            lines[index] = lines[index].copy(carbs = n)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val amountLabel = when {
+                                line.kind != "RECIPE" -> "Cantidad (${line.unit})"
+                                line.mode == "GRAMS" -> "Gramos"
+                                else -> "Cantidad del plato"
+                            }
+                            NumberInput(line.amount, { newAmount ->
+                                    lines[index] = line.copy(amount = newAmount)
+                                    scope.launch {
+                                        val quantity = decimal(newAmount)
+                                        if (quantity != null && quantity >= BigDecimal.ZERO) {
+                                            val n = if (line.usingSavedSnapshot) {
+                                                val old = decimal(line.amount)
+                                                if (old != null && old > BigDecimal.ZERO && line.carbs != null)
+                                                    line.carbs.multiply(quantity).divide(old, MathContext.DECIMAL128) else null
+                                            } else line.sourceId?.let { id -> runCatching { vm.mealLine(line.kind, id, line.mode, newAmount, updated).carbs }.getOrNull() }
+                                            if (index < lines.size && lines[index].name == line.name && lines[index].amount == newAmount &&
+                                                lines[index].rationsInput == line.rationsInput && lines[index].mode == line.mode)
+                                                lines[index] = lines[index].copy(carbs = n,
+                                                    rationsInput = n?.divide(BigDecimal.TEN, MathContext.DECIMAL128)?.let(::pretty)?.takeUnless { it == "—" }.orEmpty())
+                                        }
                                     }
-                                }
-                            }, "Cantidad en ${line.unit}", Modifier.fillMaxWidth())
+                                }, amountLabel, Modifier.weight(1f))
+                            NumberInput(line.rationsInput, { value ->
+                                val carbs = decimal(value)?.multiply(BigDecimal.TEN)
+                                lines[index] = line.copy(carbs = carbs, rationsInput = value)
+                            }, "Raciones HC", Modifier.weight(1f))
+                        }
                         Text("${pretty(line.carbs)} g de hidratos · ${pretty(line.carbs?.divide(BigDecimal.TEN, MathContext.DECIMAL128))} raciones HC",
                             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
                         if (line.originalCarbs != null && line.carbs != null && line.originalCarbs.compareTo(line.carbs) != 0)
-                            Text("Antes: ${pretty(line.originalCarbs)} g HC · diferencia ${pretty(line.carbs?.subtract(line.originalCarbs))} g",
+                            Text("Antes: ${pretty(line.originalCarbs)} g HC · diferencia ${pretty(line.carbs.subtract(line.originalCarbs))} g",
                                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { lines.removeAt(index) }) { Text("Quitar") }
@@ -123,27 +155,27 @@ import java.util.Date
             }
             PrimaryAction("+ Añadir alimento", onClick = { picker = "INGREDIENT" })
             SecondaryAction("+ Añadir plato guardado", onClick = { picker = "RECIPE" })
-            TextButton(onClick = { moreOptions = !moreOptions }) {
-                Text(if (moreOptions) "Ocultar opciones" else "Nombre, notas y plantilla (opcional)", style = MaterialTheme.typography.bodyLarge)
-            }
-            if (moreOptions) {
-                OutlinedTextField(title, { title = it }, label = { Text("Nombre de la comida") },
-                    textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp))
-                OutlinedTextField(notes, { notes = it }, label = { Text("Notas") }, modifier = Modifier.fillMaxWidth())
-            }
-            ErrorText(error)
-            PrimaryAction("Guardar comida", onClick = { scope.launch { runCatching {
-                require(lines.isNotEmpty()) { "Añade un plato o ingrediente" }
-                require(lines.all { (decimal(it.amount) ?: BigDecimal(-1)) > BigDecimal.ZERO }) { "Revisa las cantidades" }
-                vm.saveMeal(title, notes, false, lines.toList())
-            }.onSuccess { nav.navigate("history") { popUpTo("home") } }.onFailure { error = it.message } } })
-            if (moreOptions) SecondaryAction("Guardar como plantilla", onClick = { scope.launch { runCatching {
-                require(lines.isNotEmpty()) { "Añade un plato o ingrediente" }
-                require(lines.all { (decimal(it.amount) ?: BigDecimal(-1)) > BigDecimal.ZERO }) { "Revisa las cantidades" }
-                vm.saveMeal(title, notes, true, lines.toList())
-            }.onSuccess { nav.navigate("history") { popUpTo("home") } }.onFailure { error = it.message } } })
+            OutlinedTextField(title, { title = it }, label = { Text("Nombre de la comida (opcional)") },
+                textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(insulin, { insulin = it }, label = { Text("Insulina (unidades, opcional)") },
+                textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            NumberInput(manualCarbRations, { manualCarbRations = it }, "Raciones HC manuales de la comida (opcional)", Modifier.fillMaxWidth())
+            Text("Si lo rellenas, sustituye la suma de los alimentos.", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(notes, { notes = it }, label = { Text("Observaciones (opcional)") },
+                textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth(), minLines = 2)
         }
-        Surface(shadowElevation = 8.dp) { Box(Modifier.fillMaxWidth().padding(12.dp)) { Totals(total, "Total de la comida") } }
+        Surface(shadowElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${pretty(total?.carbs)} g HC · ${pretty(total?.portions)} raciones HC",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                ErrorText(error)
+                PrimaryAction(if (editing) "Guardar cambios" else "Guardar comida", onClick = saveMeal)
+            }
+        }
     }
     if (picker == "INGREDIENT") IngredientPicker(ingredients,
         onDismiss = { picker = "" },
@@ -163,7 +195,7 @@ import java.util.Date
                     val r = summary.recipe
                     ListItem(headlineContent = { Text(r.name) }, supportingContent = { Text(
                         if (summary.requiresReview) "Revisar valores anteriores antes de añadir"
-                        else "${r.portions} porciones${r.finishedWeight?.let { " · $it g finales" } ?: ""}"
+                        else "${pretty(summary.total?.portions)} raciones HC"
                     ) },
                         leadingContent = { r.photoUri?.let { uri ->
                             AsyncImage(model = uri, contentDescription = "Foto de ${r.name}",
@@ -175,7 +207,9 @@ import java.util.Date
                                 picker = ""
                                 createMode = "RECIPE"
                             } else {
-                                chosenRecipe = r; amount = "1"; mode = "PORTIONS"; picker = ""
+                                picker = ""
+                                scope.launch { runCatching { vm.mealLine("RECIPE", r.id, "PORTIONS", "1") }
+                                    .onSuccess { lines.add(it) }.onFailure { error = it.message } }
                             }
                         })
                     HorizontalDivider()
@@ -184,67 +218,84 @@ import java.util.Date
             TextButton(onClick = { picker = "" }) { Text("Cancelar") }
         }
     }
-    if (chosenIngredient != null || chosenRecipe != null) AlertDialog(onDismissRequest = { chosenIngredient = null; chosenRecipe = null },
-        title = { Text(chosenIngredient?.name ?: chosenRecipe?.name.orEmpty()) },
+    chosenIngredient?.let { ingredient -> AlertDialog(onDismissRequest = { chosenIngredient = null },
+        title = { Text(ingredient.name) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("¿Cuánto vas a comer?", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-            chosenRecipe?.let { r ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = mode == "PORTIONS", onClick = { mode = "PORTIONS"; amount = "1" }, label = { Text("Porciones", style = MaterialTheme.typography.bodyMedium) })
-                    if (r.finishedWeight != null) FilterChip(selected = mode == "GRAMS", onClick = { mode = "GRAMS"; amount = "100" }, label = { Text("Peso final", style = MaterialTheme.typography.bodyMedium) })
-                }
-                if (mode == "PORTIONS") Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    listOf("0,5", "1", "2").forEach { v -> FilterChip(selected = amount == v,
-                        onClick = { amount = v }, label = { Text(v, style = MaterialTheme.typography.bodyLarge) }) }
-                }
-            }
-            NumberInput(amount, { amount = it }, chosenIngredient?.let { "Cantidad en ${it.unit}" }
-                ?: if (mode == "GRAMS") "Gramos del plato preparado" else "Porciones del plato", Modifier.fillMaxWidth())
-            chosenIngredient?.let { ingredient ->
-                SecondaryAction(if (ingredient.custom) "Editar valor del alimento" else "Usar otro valor", onClick = {
-                    ingredientEditorId = ingredient.id
-                    createMode = "INGREDIENT"
-                })
-            }
+            Text("Cantidad del alimento", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            NumberInput(amount, { amount = it }, "Cantidad en ${ingredient.unit}", Modifier.fillMaxWidth())
+            SecondaryAction(if (ingredient.custom) "Editar valor del alimento" else "Usar otro valor", onClick = {
+                ingredientEditorId = ingredient.id
+                createMode = "INGREDIENT"
+            })
         } }, confirmButton = { TextButton(onClick = { scope.launch { runCatching {
             require((decimal(amount) ?: BigDecimal.ZERO) > BigDecimal.ZERO) { "Cantidad inválida" }
-            val item = chosenIngredient?.let { vm.mealLine("INGREDIENT", it.id, "AMOUNT", amount) }
-                ?: chosenRecipe?.let { vm.mealLine("RECIPE", it.id, mode, amount) }
-            if (item != null) lines.add(item)
-        }.onSuccess { chosenIngredient = null; chosenRecipe = null }.onFailure { error = it.message } } }) { Text("Añadir") } },
-        dismissButton = { TextButton(onClick = { chosenIngredient = null; chosenRecipe = null }) { Text("Cancelar") } })
+            lines.add(vm.mealLine("INGREDIENT", ingredient.id, "AMOUNT", amount))
+        }.onSuccess { chosenIngredient = null }.onFailure { error = it.message } } }) { Text("Añadir") } },
+        dismissButton = { TextButton(onClick = { chosenIngredient = null }) { Text("Cancelar") } }) }
 }
 
 @Composable internal fun HistoryScreen(vm: AppViewModel, nav: NavHostController) {
     val meals by vm.meals.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var deleteId by remember { mutableStateOf<Long?>(null) }
-    var expandedId by remember { mutableStateOf<Long?>(null) }
     Page("Historial", "Aquí están tus comidas y plantillas guardadas.") {
         meals.forEach { record ->
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("${if (record.meal.isTemplate) "Plantilla · " else ""}${record.meal.title}",
                         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.meal.occurredAt)),
-                        style = MaterialTheme.typography.bodyMedium)
-                    Text("${pretty(record.meal.carbsSnapshot?.let(::decimal))} g de hidratos · ${pretty(record.meal.carbsSnapshot?.let(::decimal)?.divide(BigDecimal.TEN))} raciones HC",
-                        color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                    PrimaryAction("Repetir comida", onClick = { nav.navigate("meal/${record.meal.id}/false") })
-                    TextButton(onClick = { expandedId = if (expandedId == record.meal.id) null else record.meal.id }) {
-                        Text(if (expandedId == record.meal.id) "Ocultar detalles" else "Ver detalles y opciones", style = MaterialTheme.typography.bodyLarge)
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Surface(color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${pretty(record.meal.carbsSnapshot?.let(::decimal))} g de hidratos",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("${pretty(record.meal.carbsSnapshot?.let(::decimal)?.divide(BigDecimal.TEN))} raciones HC",
+                                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                            }
+                            if (record.meal.insulin.isNotBlank()) {
+                                Column(horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("${record.meal.insulin} U", color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                    Text("Insulina", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
                     }
-                    if (expandedId == record.meal.id) {
-                        record.items.forEach { item -> Text("${item.nameSnapshot}: ${item.amount} ${item.unit} · ${pretty(item.carbsSnapshot?.let(::decimal))} g HC",
-                            style = MaterialTheme.typography.bodyMedium) }
-                        if (record.meal.notes.isNotBlank()) Text(record.meal.notes, style = MaterialTheme.typography.bodyMedium)
-                        SecondaryAction("Repetir con valores actuales", onClick = { nav.navigate("meal/${record.meal.id}/true") })
-                        TextButton(onClick = { deleteId = record.meal.id }) { Text("Eliminar registro") }
+                    HorizontalDivider()
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        record.items.forEach { item ->
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(item.nameSnapshot, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                Text("${item.amount} ${item.unit} · ${pretty(item.carbsSnapshot?.let(::decimal))} g HC · ${pretty(item.carbsSnapshot?.let(::decimal)?.divide(BigDecimal.TEN))} raciones HC",
+                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    if (record.meal.notes.isNotBlank()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Observaciones", style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                            Text(record.meal.notes, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { nav.navigate("meal-edit/${record.meal.id}") }) { Text("Editar") }
+                        TextButton(onClick = { nav.navigate("meal/${record.meal.id}/false") }) { Text("Repetir") }
+                        TextButton(onClick = { deleteId = record.meal.id }) { Text("Eliminar") }
                     }
                 }
             }
         }
-        if (meals.isEmpty()) Text("Todavía no hay comidas guardadas. Empieza desde Inicio.", style = MaterialTheme.typography.bodyLarge)
+        if (meals.isEmpty()) Text("Todavía no hay comidas guardadas. Registra una desde Comida.", style = MaterialTheme.typography.bodyLarge)
     }
     deleteId?.let { id -> AlertDialog(onDismissRequest = { deleteId = null }, title = { Text("¿Eliminar registro?") },
         text = { Text("Esta acción borra la comida o plantilla guardada.") },

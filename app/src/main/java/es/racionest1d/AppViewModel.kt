@@ -44,8 +44,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun getMeal(id: Long) = repository.getMeal(id)
     suspend fun mealLine(kind: String, sourceId: Long, mode: String, amount: String, latestIngredients: Boolean = false) =
         repository.mealLine(kind, sourceId, mode, amount, latestIngredients)
-    suspend fun saveMeal(title: String, notes: String, template: Boolean, lines: List<DraftMealItem>) =
-        repository.saveMeal(title, notes, template, lines)
+    suspend fun saveMeal(title: String, notes: String, template: Boolean, lines: List<DraftMealItem>, insulin: String = "",
+        manualCarbRations: String? = null) = repository.saveMeal(title, notes, template, lines, insulin, manualCarbRations)
+    suspend fun updateMeal(id: Long, title: String, notes: String, insulin: String, lines: List<DraftMealItem>, manualCarbRations: String? = null) =
+        repository.updateMeal(id, title, notes, insulin, lines, manualCarbRations)
     suspend fun repeatMeal(id: Long, updated: Boolean) = repository.repeatMeal(id, updated)
     suspend fun deleteMeal(id: Long) = repository.deleteMeal(id)
 

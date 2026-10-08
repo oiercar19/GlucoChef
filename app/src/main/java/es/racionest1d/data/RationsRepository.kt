@@ -26,7 +26,9 @@ data class DraftMealItem(
     val carbs: BigDecimal?,
     val source: String,
     val originalCarbs: BigDecimal? = null,
-    val usingSavedSnapshot: Boolean = false
+    val usingSavedSnapshot: Boolean = false,
+    val rationsInput: String = carbs?.divide(BigDecimal.TEN, java.math.MathContext.DECIMAL128)
+        ?.stripTrailingZeros()?.toPlainString().orEmpty()
 )
 
 class RationsRepository(val db: AppDatabase) {
@@ -35,14 +37,16 @@ class RationsRepository(val db: AppDatabase) {
     val recipeSummaries = db.recipes().observeAllWithIngredients().combine(ingredients) { entries, available ->
         val availableIds = available.map { it.id }.toSet()
         entries.map { entry ->
-            val total = recipeNutrition(entry.ingredients)
+            val calculated = recipeNutrition(entry.ingredients)
+            val manualRations = entry.recipe.manualCarbRations?.let(::decimal)?.takeIf { it >= BigDecimal.ZERO }
+            val total = manualRations?.let { Nutrition(it.multiply(BigDecimal.TEN)) } ?: calculated
             val portions = decimal(entry.recipe.portions)?.takeIf { it > BigDecimal.ZERO }
             RecipeSummary(
                 recipe = entry.recipe,
                 ingredientNames = entry.ingredients.map { it.nameSnapshot }.distinct(),
                 total = total,
                 perPortion = if (portions == null) null else CarbCalculator.portion(total, portions, BigDecimal.ONE),
-                requiresReview = entry.ingredients.any { line ->
+                requiresReview = manualRations == null && entry.ingredients.any { line ->
                     line.ingredientId == null || line.ingredientId !in availableIds
                 }
             )
@@ -98,6 +102,9 @@ class RationsRepository(val db: AppDatabase) {
         require(recipe.name.isNotBlank() && draft.isNotEmpty())
         require((decimal(recipe.portions) ?: BigDecimal.ZERO) > BigDecimal.ZERO)
         require(recipe.finishedWeight == null || (decimal(recipe.finishedWeight) ?: BigDecimal.ZERO) > BigDecimal.ZERO)
+        require(recipe.manualCarbRations == null || (decimal(recipe.manualCarbRations) ?: BigDecimal(-1)) >= BigDecimal.ZERO) {
+            "Indica un número válido de raciones HC"
+        }
         val id = if (recipe.id == 0L) db.recipes().insert(recipe) else {
             db.recipes().update(recipe.copy(updatedAt = System.currentTimeMillis()))
             db.recipes().clearIngredients(recipe.id)
@@ -105,7 +112,7 @@ class RationsRepository(val db: AppDatabase) {
         }
         db.recipes().insertIngredients(draft.map { (ingredient, amount) ->
             val n = nutrition(ingredient, amount)
-            RecipeIngredient(recipeId = id, ingredientId = ingredient.id, nameSnapshot = ingredient.name,
+            RecipeIngredient(recipeId = id, ingredientId = ingredient.id.takeIf { it > 0 }, nameSnapshot = ingredient.name,
                 variantSnapshot = ingredient.variant, amount = amount, unit = ingredient.unit,
                 gramsPerPortionSnapshot = ingredient.gramsPerPortion, carbsPerHundredSnapshot = ingredient.carbsPerHundred,
                 carbsSnapshot = n?.carbs?.toPlainString(), statusSnapshot = ingredient.dataStatus,
@@ -143,19 +150,28 @@ class RationsRepository(val db: AppDatabase) {
                 nutrition(i, amount)?.carbs, i.source)
         } else {
             val r = db.recipes().get(sourceId) ?: error("Plato no encontrado")
-            val total = recipeNutrition(sourceId, latestIngredients)
+            val manualRations = r.manualCarbRations?.let(::decimal)?.takeIf { it >= BigDecimal.ZERO }
+            val total = manualRations?.let { Nutrition(it.multiply(BigDecimal.TEN)) }
+                ?: recipeNutrition(sourceId, latestIngredients)
             val n = if (mode == "GRAMS") CarbCalculator.byFinishedWeight(total, decimal(r.finishedWeight ?: ""), quantity)
                 else CarbCalculator.portion(total, decimal(r.portions) ?: BigDecimal.ONE, quantity)
-            DraftMealItem(kind, sourceId, r.name, mode, amount, if (mode == "GRAMS") "g" else "porciones",
+            DraftMealItem(kind, sourceId, r.name, mode, amount, if (mode == "GRAMS") "g" else "platos",
                 n?.carbs, "Plato guardado: ${r.name}")
         }
     }
 
-    suspend fun saveMeal(title: String, notes: String, template: Boolean, lines: List<DraftMealItem>): Long = db.withTransaction {
+    suspend fun saveMeal(title: String, notes: String, template: Boolean, lines: List<DraftMealItem>, insulin: String = "",
+        manualCarbRations: String? = null): Long = db.withTransaction {
         require(lines.isNotEmpty())
+        require(manualCarbRations == null || (decimal(manualCarbRations) ?: BigDecimal(-1)) >= BigDecimal.ZERO) {
+            "Indica un número válido de raciones HC"
+        }
         val total = CarbCalculator.sum(lines.map { it.carbs?.let(::Nutrition) })
+        val manual = manualCarbRations?.let(::decimal)?.takeIf { it >= BigDecimal.ZERO }
+        val carbs = manual?.multiply(BigDecimal.TEN) ?: total?.carbs
         val id = db.meals().insert(Meal(title = title.ifBlank { if (template) "Plantilla" else "Comida" },
-            notes = notes, isTemplate = template, carbsSnapshot = total?.carbs?.toPlainString()))
+            notes = notes, insulin = insulin, manualCarbRations = manualCarbRations,
+            isTemplate = template, carbsSnapshot = carbs?.toPlainString()))
         db.meals().insertItems(lines.map { line -> MealItem(mealId = id, kind = line.kind,
             sourceId = line.sourceId, nameSnapshot = line.name, mode = line.mode, amount = line.amount,
             unit = line.unit, carbsSnapshot = line.carbs?.toPlainString(), sourceSnapshot = line.source) })
@@ -163,6 +179,27 @@ class RationsRepository(val db: AppDatabase) {
             db.recipes().get(recipeId)?.let { db.recipes().update(it.copy(lastUsedAt = System.currentTimeMillis())) }
         }
         id
+    }
+
+    suspend fun updateMeal(id: Long, title: String, notes: String, insulin: String, lines: List<DraftMealItem>,
+        manualCarbRations: String? = null) = db.withTransaction {
+        require(lines.isNotEmpty()) { "Añade un plato o ingrediente" }
+        require(manualCarbRations == null || (decimal(manualCarbRations) ?: BigDecimal(-1)) >= BigDecimal.ZERO) {
+            "Indica un número válido de raciones HC"
+        }
+        val current = db.meals().get(id)?.meal ?: error("Comida no encontrada")
+        val total = CarbCalculator.sum(lines.map { it.carbs?.let(::Nutrition) })
+        val manual = manualCarbRations?.let(::decimal)?.takeIf { it >= BigDecimal.ZERO }
+        val carbs = manual?.multiply(BigDecimal.TEN) ?: total?.carbs
+        db.meals().update(current.copy(title = title.ifBlank { "Comida" }, notes = notes, insulin = insulin,
+            manualCarbRations = manualCarbRations, carbsSnapshot = carbs?.toPlainString()))
+        db.meals().clearItems(id)
+        db.meals().insertItems(lines.map { line -> MealItem(mealId = id, kind = line.kind,
+            sourceId = line.sourceId, nameSnapshot = line.name, mode = line.mode, amount = line.amount,
+            unit = line.unit, carbsSnapshot = line.carbs?.toPlainString(), sourceSnapshot = line.source) })
+        lines.filter { it.kind == "RECIPE" }.mapNotNull { it.sourceId }.distinct().forEach { recipeId ->
+            db.recipes().get(recipeId)?.let { db.recipes().update(it.copy(lastUsedAt = System.currentTimeMillis())) }
+        }
     }
 
     suspend fun repeatMeal(id: Long, updated: Boolean): List<DraftMealItem> {

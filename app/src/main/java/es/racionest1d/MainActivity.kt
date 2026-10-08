@@ -8,6 +8,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,44 +41,59 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val teal = androidx.compose.ui.graphics.Color(0xFF067A70)
-private val pale = androidx.compose.ui.graphics.Color(0xFFE4F6F0)
+private val teal = androidx.compose.ui.graphics.Color(0xFF176B5B)
+private val pale = androidx.compose.ui.graphics.Color(0xFFE6F3EE)
 
 @Composable private fun RationsApp(vm: AppViewModel) {
     val dark by vm.darkTheme.collectAsState(initial = false)
     val largeText by vm.largeText.collectAsState(initial = false)
     val nav = rememberNavController()
     val typography = Typography(
-        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 22.sp else 18.sp, lineHeight = if (largeText) 31.sp else 26.sp),
-        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 20.sp else 17.sp, lineHeight = if (largeText) 28.sp else 24.sp),
-        bodySmall = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 17.sp else 15.sp, lineHeight = if (largeText) 24.sp else 21.sp),
-        titleMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 23.sp else 20.sp, lineHeight = if (largeText) 30.sp else 27.sp),
-        titleLarge = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 27.sp else 24.sp, lineHeight = if (largeText) 34.sp else 31.sp),
-        headlineMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 32.sp else 28.sp, lineHeight = if (largeText) 39.sp else 35.sp)
+        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 20.sp else 16.sp, lineHeight = if (largeText) 28.sp else 23.sp),
+        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 18.sp else 14.sp, lineHeight = if (largeText) 25.sp else 20.sp),
+        bodySmall = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 15.sp else 12.sp, lineHeight = if (largeText) 21.sp else 17.sp),
+        titleMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 20.sp else 18.sp, lineHeight = if (largeText) 27.sp else 24.sp),
+        titleLarge = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 24.sp else 21.sp, lineHeight = if (largeText) 31.sp else 28.sp),
+        headlineMedium = androidx.compose.ui.text.TextStyle(fontSize = if (largeText) 28.sp else 25.sp, lineHeight = if (largeText) 35.sp else 32.sp)
     )
-    MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF79D8C3))
-        else lightColorScheme(primary = teal, primaryContainer = pale), typography = typography) {
+    MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF79D8C3),
+        secondary = androidx.compose.ui.graphics.Color(0xFFA7D7C8))
+        else lightColorScheme(primary = teal, secondary = androidx.compose.ui.graphics.Color(0xFF55746A),
+            primaryContainer = pale, background = androidx.compose.ui.graphics.Color(0xFFF7F9F7), surface = androidx.compose.ui.graphics.Color(0xFFFFFFFF)), typography = typography) {
         val backStack by nav.currentBackStackEntryAsState()
         val route = backStack?.destination?.route.orEmpty()
-        val tabs = listOf("home" to "Inicio", "ingredients" to "Alimentos", "recipes" to "Platos", "history" to "Historial")
+        val tabs = listOf(
+            Triple("meal/-1/false", "Comida", Icons.Filled.Add),
+            Triple("ingredients", "Alimentos", Icons.Filled.Search),
+            Triple("recipes", "Platos", Icons.Filled.List),
+            Triple("history", "Historial", Icons.Filled.DateRange)
+        )
         Scaffold(topBar = {
             Surface(color = MaterialTheme.colorScheme.surface) {
-                Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 8.dp)) {
-                    Text("GlucoChef", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
+                Column(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 20.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("GlucoChef", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Ajustes")
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
             }
         }, bottomBar = {
             NavigationBar {
-                tabs.forEach { (destination, label) ->
-                    NavigationBarItem(selected = route == destination,
+                tabs.forEach { (destination, label, icon) ->
+                    val selected = if (destination == "meal/-1/false") route.startsWith("meal/") else route == destination
+                    NavigationBarItem(selected = selected,
                         onClick = { nav.navigate(destination) { launchSingleTop = true } },
-                        icon = { Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, maxLines = 1) })
+                        icon = { Icon(imageVector = icon, contentDescription = label) },
+                        label = { Text(label, maxLines = 1) })
                 }
             }
         }) { inset ->
-            NavHost(navController = nav, startDestination = "home", modifier = Modifier.padding(inset)) {
-                composable("home") { HomeScreen(vm, nav) }
+            NavHost(navController = nav, startDestination = "meal/-1/false", modifier = Modifier.padding(inset)) {
                 composable("ingredients") { IngredientsScreen(vm, nav) }
                 composable("ingredient/{id}") { entry -> IngredientEditor(vm, nav, entry.arguments?.getString("id")?.toLongOrNull() ?: 0) }
                 composable("recipes") { RecipesScreen(vm, nav) }
@@ -80,6 +101,8 @@ private val pale = androidx.compose.ui.graphics.Color(0xFFE4F6F0)
                 composable("meal/{id}/{updated}") { entry -> MealEditor(vm, nav,
                     entry.arguments?.getString("id")?.toLongOrNull() ?: -1,
                     entry.arguments?.getString("updated") == "true") }
+                composable("meal-edit/{id}") { entry -> MealEditor(vm, nav,
+                    entry.arguments?.getString("id")?.toLongOrNull() ?: -1, false, editing = true) }
                 composable("history") { HistoryScreen(vm, nav) }
                 composable("settings") { SettingsScreen(vm) }
             }
@@ -104,7 +127,7 @@ internal fun pretty(n: BigDecimal?): String = n?.setScale(2, RoundingMode.HALF_U
 }
 
 @Composable internal fun Page(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 18.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         content()
@@ -113,8 +136,8 @@ internal fun pretty(n: BigDecimal?): String = n?.setScale(2, RoundingMode.HALF_U
 }
 
 @Composable internal fun InfoCard(title: String, detail: String, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 92.dp), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp), shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(detail, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -124,43 +147,23 @@ internal fun pretty(n: BigDecimal?): String = n?.setScale(2, RoundingMode.HALF_U
 @Composable internal fun NumberInput(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
     OutlinedTextField(value, onChange, label = { Text(label) }, singleLine = true,
         textStyle = MaterialTheme.typography.bodyLarge, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        modifier = modifier.heightIn(min = 64.dp))
+        modifier = modifier.heightIn(min = 56.dp))
 }
 
 @Composable internal fun PrimaryAction(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = modifier.fillMaxWidth().heightIn(min = 60.dp), shape = RoundedCornerShape(16.dp)) {
+    Button(onClick = onClick, modifier = modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) {
         Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable internal fun SecondaryAction(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(16.dp)) {
+    OutlinedButton(onClick = onClick, modifier = modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(14.dp)) {
         Text(text, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
 @Composable internal fun ErrorText(error: String?) {
     if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-}
-
-@Composable private fun HomeScreen(vm: AppViewModel, nav: NavHostController) {
-    val recipes by vm.recipes.collectAsState(initial = emptyList())
-    Page("¿Qué quieres hacer?", "Elige una opción para empezar. Una ración de HC son 10 g de hidratos.") {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Voy a comer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Suma alimentos y platos para ver el total de la comida.", style = MaterialTheme.typography.bodyLarge)
-                PrimaryAction("+ Nueva comida") { nav.navigate("meal/-1/false") }
-            }
-        }
-        InfoCard("Buscar un alimento", "Escribe su nombre y el peso que vas a comer.") { nav.navigate("ingredients") }
-        InfoCard("Guardar un plato", "Añade sus ingredientes una vez y úsalo después.") { nav.navigate("recipe/0") }
-        if (recipes.isNotEmpty()) {
-            Text("Platos guardados", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            recipes.take(2).forEach { recipe -> InfoCard(recipe.name, "Abrir plato") { nav.navigate("recipe/${recipe.id}") } }
-        }
-        TextButton(onClick = { nav.navigate("settings") }) { Text("Ajustes") }
-    }
 }
 
 @Composable private fun IngredientsScreen(vm: AppViewModel, nav: NavHostController) {

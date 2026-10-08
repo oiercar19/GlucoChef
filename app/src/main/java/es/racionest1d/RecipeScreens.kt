@@ -23,6 +23,7 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import es.racionest1d.data.*
 import es.racionest1d.domain.CarbCalculator
+import es.racionest1d.domain.Nutrition
 import es.racionest1d.domain.decimal
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
@@ -71,55 +72,46 @@ import java.util.UUID
 @Composable internal fun RecipesScreen(vm: AppViewModel, nav: NavHostController) {
     val all by vm.recipeSummaries.collectAsState(initial = emptyList())
     var query by remember { mutableStateOf("") }
-    var favoritesOnly by remember { mutableStateOf(false) }
     var deleteId by remember { mutableStateOf<Long?>(null) }
-    var optionsId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     Page("Mis platos", "Abre un plato guardado o crea uno nuevo.") {
         PrimaryAction("+ Crear plato") { nav.navigate("recipe/0") }
         OutlinedTextField(query, { query = it }, label = { Text("Buscar plato") },
             textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp))
-        FilterChip(selected = favoritesOnly, onClick = { favoritesOnly = !favoritesOnly }, label = { Text("Solo favoritos", style = MaterialTheme.typography.bodyMedium) })
-        all.filter { (!favoritesOnly || it.recipe.favorite) &&
-            (it.recipe.name.contains(query, true) || it.recipe.category.contains(query, true)) }.forEach { summary ->
+        all.filter { it.recipe.name.contains(query, true) || it.recipe.category.contains(query, true) }.forEach { summary ->
             val r = summary.recipe
             val names = summary.ingredientNames.take(4).joinToString(", ")
             val remaining = summary.ingredientNames.size - 4
             Card(Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     r.photoUri?.let { uri ->
                         AsyncImage(model = uri, contentDescription = "Foto del plato ${r.name}",
                             modifier = Modifier.fillMaxWidth().height(150.dp),
                             contentScale = ContentScale.Crop)
                     }
                     Text("${if (r.favorite) "★ " else ""}${r.name}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${r.portions} ${if (r.portions == "1") "porción" else "porciones"}", style = MaterialTheme.typography.bodyLarge)
                     Surface(color = MaterialTheme.colorScheme.primaryContainer,
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) {
-                        Text(summary.perPortion?.let { "Por porción: ${pretty(it.portions)} raciones de HC" }
-                            ?: "Raciones de HC por porción: pendientes",
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        Text(summary.total?.let { "${pretty(it.portions)} raciones HC" }
+                            ?: "Raciones HC pendientes",
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
                             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
-                    if (decimal(r.portions)?.compareTo(BigDecimal.ONE) != 0)
-                        Text(summary.total?.let { "Plato completo: ${pretty(it.portions)} raciones de HC" }
-                            ?: "Raciones de HC del plato completo: pendientes",
-                            style = MaterialTheme.typography.bodyMedium)
-                    Text("Ingredientes: $names${if (remaining > 0) " y $remaining más" else ""}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Ingredientes", style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                        Text("$names${if (remaining > 0) " y $remaining más" else ""}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                     if (summary.requiresReview) Text(
                         "Este plato usa valores anteriores. Abre el plato y cambia esos alimentos antes de volver a usarlo.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error
                     )
-                    SecondaryAction("Abrir plato", onClick = { nav.navigate("recipe/${r.id}") })
-                    TextButton(onClick = { optionsId = if (optionsId == r.id) null else r.id }) { Text("Más opciones") }
-                    if (optionsId == r.id) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { scope.launch { vm.duplicateRecipe(r.id) } }) { Text("Duplicar") }
-                            TextButton(onClick = { deleteId = r.id }) { Text("Eliminar") }
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { nav.navigate("recipe/${r.id}") }) { Text("Editar") }
+                        TextButton(onClick = { scope.launch { vm.duplicateRecipe(r.id) } }) { Text("Duplicar") }
+                        TextButton(onClick = { deleteId = r.id }) { Text("Eliminar") }
                     }
                 }
             }
@@ -143,8 +135,7 @@ import java.util.UUID
     val draft = remember(id) { mutableStateListOf<DraftIngredient>() }
     var name by remember(id) { mutableStateOf("") }
     var category by remember(id) { mutableStateOf("Comida") }
-    var portions by remember(id) { mutableStateOf("1") }
-    var finalWeight by remember(id) { mutableStateOf("") }
+    var manualCarbRations by remember(id) { mutableStateOf("") }
     var notes by remember(id) { mutableStateOf("") }
     var photoUri by rememberSaveable(id) { mutableStateOf<String?>(null) }
     var pendingPhotoUri by rememberSaveable(id) { mutableStateOf<String?>(null) }
@@ -157,7 +148,6 @@ import java.util.UUID
     var replacing by remember { mutableIntStateOf(-1) }
     var createIngredient by remember { mutableStateOf(false) }
     var ingredientEditorId by remember { mutableLongStateOf(0L) }
-    var moreOptions by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
@@ -165,8 +155,8 @@ import java.util.UUID
         pendingPhotoUri = null
     }
     LaunchedEffect(id) { if (id > 0) vm.getRecipe(id)?.let { loaded ->
-        name = loaded.recipe.name; category = loaded.recipe.category; portions = loaded.recipe.portions
-        finalWeight = loaded.recipe.finishedWeight.orEmpty(); notes = loaded.recipe.notes
+        name = loaded.recipe.name; category = loaded.recipe.category
+        manualCarbRations = loaded.recipe.manualCarbRations.orEmpty(); notes = loaded.recipe.notes
         if (!photoEdited) photoUri = loaded.recipe.photoUri
         favorite = loaded.recipe.favorite; createdAt = loaded.recipe.createdAt
         draft.clear()
@@ -200,7 +190,22 @@ import java.util.UUID
             })
         return
     }
-    val total = CarbCalculator.sum(draft.map { runCatching { vm.nutrition(it.ingredient, it.amount) }.getOrNull() })
+    val calculatedTotal = CarbCalculator.sum(draft.map { runCatching { vm.nutrition(it.ingredient, it.amount) }.getOrNull() })
+    val manualRations = decimal(manualCarbRations)?.takeIf { it >= BigDecimal.ZERO }
+    val total = manualRations?.let { Nutrition(it.multiply(BigDecimal.TEN)) } ?: calculatedTotal
+    val saveRecipe: () -> Unit = {
+        scope.launch { runCatching {
+            require(name.isNotBlank()) { "Escribe el nombre" }
+            require(draft.isNotEmpty()) { "Añade al menos un ingrediente" }
+            require(manualCarbRations.isNotBlank() || draft.all { it.ingredient.id > 0L }) {
+                "Cambia los alimentos anteriores o indica las raciones HC manuales"
+            }
+            require(draft.all { (decimal(it.amount) ?: BigDecimal.ZERO) > BigDecimal.ZERO }) { "Revisa los pesos" }
+            vm.saveRecipe(Recipe(id = id, name = name.trim(), category = category,
+                portions = "1", finishedWeight = null, manualCarbRations = manualCarbRations.takeIf { it.isNotBlank() }, notes = notes,
+                photoUri = photoUri, favorite = favorite, createdAt = createdAt), draft.toList())
+        }.onSuccess { onSaved(it) }.onFailure { error = it.message } }
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(if (id == 0L) "Crear plato" else "Editar plato", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -246,37 +251,28 @@ import java.util.UUID
                 }
             }
             PrimaryAction("+ Añadir alimento", onClick = { replacing = -1; showPicker = true })
-            Text("3. ¿Cuántas porciones salen?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Una porción es la parte del plato que comes.", style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("1", "2", "4").forEach { count -> FilterChip(selected = portions == count,
-                    onClick = { portions = count }, label = { Text(count, style = MaterialTheme.typography.bodyLarge) }) }
-            }
-            NumberInput(portions, { portions = it }, "Número de porciones", Modifier.fillMaxWidth())
-            TextButton(onClick = { moreOptions = !moreOptions }) {
-                Text(if (moreOptions) "Ocultar opciones" else "Más opciones (opcional)", style = MaterialTheme.typography.bodyLarge)
-            }
-            if (moreOptions) {
-                NumberInput(finalWeight, { finalWeight = it }, "Peso final del plato (g)", Modifier.fillMaxWidth())
-                Text("Solo hace falta si quieres calcular lo que comes por gramos del plato ya preparado.", style = MaterialTheme.typography.bodyMedium)
-                OutlinedTextField(category, { category = it }, label = { Text("Categoría") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(notes, { notes = it }, label = { Text("Notas") }, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(favorite, { favorite = it }); Text("Favorito", style = MaterialTheme.typography.bodyLarge) }
-                Text("Si desechas líquido o cambia la receta, revisa el cálculo.", style = MaterialTheme.typography.bodyMedium)
-            }
-            ErrorText(error)
-            PrimaryAction("Guardar plato", onClick = { scope.launch { runCatching {
-                require(name.isNotBlank()) { "Escribe el nombre" }
-                require(draft.isNotEmpty()) { "Añade al menos un ingrediente" }
-                require(draft.all { it.ingredient.id > 0L }) { "Cambia los alimentos del catálogo anterior antes de guardar" }
-                require(draft.all { (decimal(it.amount) ?: BigDecimal.ZERO) > BigDecimal.ZERO }) { "Revisa los pesos" }
-                vm.saveRecipe(Recipe(id = id, name = name.trim(), category = category,
-                    portions = portions, finishedWeight = finalWeight.takeIf { it.isNotBlank() }, notes = notes,
-                    photoUri = photoUri, favorite = favorite, createdAt = createdAt), draft.toList())
-            }.onSuccess { onSaved(it) }.onFailure { error = it.message } } })
-            SecondaryAction("Volver sin guardar", onClick = onCancel)
+            NumberInput(manualCarbRations, { manualCarbRations = it }, "Raciones HC manuales (opcional)", Modifier.fillMaxWidth())
+            Text("Si lo rellenas, sustituye el cálculo por ingredientes.", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(notes, { notes = it }, label = { Text("Notas (opcional)") },
+                textStyle = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth(), minLines = 2)
         }
-        Surface(shadowElevation = 8.dp) { Box(Modifier.fillMaxWidth().padding(12.dp)) { Totals(total, "Total de la receta") } }
+        Surface(shadowElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("${pretty(total?.carbs)} g HC · ${pretty(total?.portions)} raciones HC",
+                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                ErrorText(error)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onCancel) { Text("Cancelar") }
+                    Button(onClick = saveRecipe, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)) {
+                        Text("Guardar plato", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
     if (showPicker) IngredientPicker(all, onDismiss = { showPicker = false },
         onCreate = { showPicker = false; ingredientEditorId = 0L; createIngredient = true }, onPick = {
