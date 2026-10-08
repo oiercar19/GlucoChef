@@ -2,7 +2,7 @@
 
 Puedes descargar el APK desde [GlucoChef beta en GitHub Releases](https://github.com/oiercar19/GlucoChef/releases/tag/GlucoChef-beta).
 
-Aplicación Android nativa para contar hidratos de carbono (HC). Una ración de HC equivale a 10 g HC. Los cálculos usan `BigDecimal` y solo redondean al mostrar. No calcula dosis de insulina.
+Aplicación Android nativa para contar hidratos de carbono (HC). Una ración de HC equivale a 10 g HC. Los cálculos usan `BigDecimal` y solo redondean al mostrar. Permite anotar la insulina indicada por el usuario, pero no calcula dosis.
 
 ## Generar el APK en otro PC
 
@@ -187,7 +187,7 @@ Los datos y las fotos de platos se guardan en el dispositivo; las preferencias d
 
 ## Uso sencillo
 
-La pantalla de Inicio presenta tres acciones: nueva comida, buscar alimento y guardar plato. Los formularios piden primero solo nombre, cantidad y valor de hidratos; los demás campos están en «Más detalles» o «Más opciones». Al añadir un alimento o un plato a una comida, se puede crearlo desde el selector y volver a la comida sin perder lo ya introducido. El editor de platos también permite crear un alimento desde su selector. Al abrir un alimento, «Usar otro valor» está visible junto al cálculo. Puedes hacer una foto opcional del plato con la cámara; aparece en la biblioteca, al elegir el plato para una comida y al editarlo. La biblioteca muestra las raciones de HC por porción, el total del plato si contiene varias porciones y un resumen breve de ingredientes. Los totales se muestran en tarjetas grandes y quedan visibles al editar un plato o una comida. En Ajustes se puede activar «Texto más grande». La app también respeta el tamaño de letra configurado en Android.
+La app abre directamente el registro de una comida. Al añadir un plato guardado se incorpora al instante y puedes ajustar sus raciones HC. En platos y comidas, las raciones HC manuales opcionales sustituyen el cálculo automático. El historial muestra el detalle completo y permite editar las comidas guardadas. Cada comida admite observaciones e insulina anotada por el usuario. En Ajustes se puede activar «Texto más grande».
 
 ## Estructura
 
@@ -200,14 +200,14 @@ La pantalla de Inicio presenta tres acciones: nueva comida, buscar alimento y gu
 
 - Catálogo local de 66 alimentos y variantes con los pesos por ración facilitados por el usuario, búsqueda y favoritos. La actualización sustituye las entradas precargadas anteriores.
 - Ingredientes personalizados de etiqueta, estimados o pendientes, por 100 g/ml o peso por ración. Las variantes crudas y cocinadas tienen factores separados.
-- Calculadora de ingrediente, platos con pesos editables y total inmediato, número de porciones y peso final opcional.
+- Calculadora de ingrediente y platos con pesos editables, cálculo automático de hidratos y raciones manuales opcionales para platos y comidas.
 - Biblioteca de platos con búsqueda, favoritos, duplicación, edición y eliminación confirmada.
 - Foto opcional tomada con la cámara, guardada localmente y visible en las tarjetas y selectores de platos.
-- Comidas con platos e ingredientes; consumo por porciones del plato o por gramos del plato terminado, historial y plantillas.
+- Comidas con platos e ingredientes; raciones HC ajustables y sobrescribibles, observaciones, registro manual de insulina e historial editable.
 - Repetición con los valores históricos o con los actuales y diferencias visibles. Los registros guardados conservan sus subtotales originales.
 - Tema claro y oscuro.
 
-Los datos nutricionales desconocidos se muestran como pendientes y propagan un total desconocido. No se convierten automáticamente pesos crudos en cocinados. Para calcular una cantidad por gramos del plato preparado, debe registrarse su peso final comestible.
+Los datos nutricionales desconocidos se muestran como pendientes y propagan un total desconocido. No se convierten automáticamente pesos crudos en cocinados.
 
 ## Catálogo de prueba
 
@@ -221,4 +221,5 @@ Al instalar esta versión sobre una anterior, se eliminan las entradas precargad
 - La foto requiere una aplicación de cámara en el móvil. No se ha probado físicamente la captura en un dispositivo real.
 - La exportación/importación JSON, escaneo de etiquetas y códigos de barras, sincronización e integración con sensores quedan para una versión posterior. La base de datos separa las entidades y sus copias históricas para facilitar una exportación versionada.
 - Las equivalencias facilitadas son genéricas: contrástalas con el alimento, la etiqueta comercial y su estado de preparación reales.
-- No hay migraciones Room todavía: antes de cambiar el esquema hay que añadir y probar una migración para conservar los datos existentes.
+- La versión 0.8.0 migró la base de datos para añadir insulina por comida y convertir la cantidad guardada de los platos al plato completo. El historial conserva sus cálculos guardados.
+- La versión 0.10.0 añade raciones HC manuales para platos y comidas; los campos son opcionales y sustituyen el total automático cuando se rellenan.
